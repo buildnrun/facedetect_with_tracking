@@ -24,6 +24,31 @@ class FaceDetector{
     tracker = TrackerKCF::create();
   }
 
+  void mergerects(vector<Rect>& detects, vector<Rect2d>& tracks, vector<Rect2d>& merged)
+  {
+    cout << "Track size before:: " << tracks.size() << endl;
+    for(Rect r : detects)
+    {
+      Rect2d r2d(r);
+
+      for(vector<Rect2d>::iterator it = tracks.begin(); it != tracks.end(); ++it)
+      {
+        Rect2d inter = r2d & (*it);
+        if(r2d.area() * 0.7 < inter.area())
+        {
+          cout << "Deleting rect" << endl;
+          tracks.erase(it);
+          --it;
+        }
+      }
+      merged.push_back(r2d);
+    }
+
+    cout << "Track size after:: " << tracks.size() << endl;
+    if(tracks.size() > 0)
+      merged.insert(merged.end(), tracks.begin(), tracks.end());
+  }
+
   void detect(Mat& rawImg, Mat& faceImg)
   {
     Mat smallImg;
@@ -31,33 +56,35 @@ class FaceDetector{
     resize(rawImg, smallImg, Size(rawImg.cols/nScale, rawImg.rows/nScale));
     cvtColor(smallImg, smallImg, COLOR_BGR2GRAY );
 
-    if(faces.size() == 0)
+
+    if(faces.size() == 0 || nFrame%nTrackPeriod == 0)
     {
+      nFrame = 1;
       cout << "Lets find faces" << endl;
       vector<Rect> faceInt;
 
       facedetect(smallImg, faceInt);
+
       if(faceInt.size() > 0)
       {
-        for(Rect face : faceInt)
-        {
-          const Rect2d f(face);
-          tracker->init(smallImg, f);
-          faces.push_back(Rect2d(face));
-        }
+        vector<Rect2d> tracks;
+        tracks.insert(tracks.end(), faces.begin(), faces.end());
+        faces.erase(faces.begin(), faces.end());
+
+        mergerects(faceInt, tracks, faces);
       }
+
+      for(Rect f : faces)
+        tracker->init(smallImg, f);
+
     }
     else
     {
-      vector<Rect2d> newFaces;
+      nFrame ++;
       for(Rect2d& face : faces)
       {
-        Rect2d f(face);
-        tracker->update(smallImg, f);
-        newFaces.push_back(Rect2d(f));
+        tracker->update(smallImg, face);
       }
-      faces.erase(faces.begin(), faces.end());
-      faces.insert(faces.begin(), newFaces.begin(), newFaces.end());
     }
 
     faceImg = rawImg.clone();
@@ -92,26 +119,23 @@ class FaceDetector{
 
 int main(int, char**)
 {
-  VideoCapture cap("face.mp4");
+  VideoCapture cap(0);
   if(!cap.isOpened())
     return -1;
 
   vector<Mat> frames;
-  FaceDetector *face = new FaceDetector(10, 2);
+  FaceDetector *face = new FaceDetector(30, 2);
 
   namedWindow("faces");
 
   while(cap.grab())
   {
-    Mat img;
-    cap.retrieve(img);
-    resize(img, img, Size(640,480));
-    frames.push_back(img);
-  }
-
-  for(Mat rawImg : frames)
-  {
+    Mat rawImg;
     Mat faceImg;
+
+    cap.retrieve(rawImg);
+    resize(rawImg, rawImg, Size(640,480));
+
     int64 t0 = cv::getTickCount();
     face->detect(rawImg, faceImg);
     cout << "Time taken: " << (cv::getTickCount() - t0)/cv::getTickFrequency() << endl;
